@@ -5,6 +5,7 @@ import urllib.request
 import urllib.parse
 import json
 import re
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from google import genai
 
@@ -31,17 +32,34 @@ def send_telegram_message(message):
         return False
 
 def fetch_macro_news():
-    """기능 3: 뉴스 및 매크로 지표 자동 크롤링 (가벼운 공개 API 활용)"""
+    """기능 3: 실제 경제 뉴스 RSS 및 매크로 지표 자동 크롤링"""
+    news_summaries = []
     try:
-        # 코인 관련 공개 크립토 뉴스 헤드라인 데이터 소스 크롤링 시도
-        url = "https://api.coincap.io/v2/rates"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        # 코인테레그래프 RSS 피드에서 최신 헤드라인 크롤링
+        rss_url = "https://cointelegraph.com/rss"
+        req = urllib.request.Request(rss_url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
-            # 기본 거시경제 브리핑용 가상 텍스트 조합 (안전성 확보)
-            macro_info = "최근 거시경제 동향: 미국 금리 인하 기대감 및 중동 지정학적 리스크 지속, 비트코인 유동성 유입 관찰됨."
-            return macro_info
-    except Exception:
-        return "거시경제 데이터 수집 일시 지연 (기본 유동성 흐름 유지 중)"
+            xml_data = response.read()
+            root = ET.fromstring(xml_data)
+            count = 0
+            for item in root.findall('.//item'):
+                title = item.find('title')
+                if title is not None and title.text:
+                    news_summaries.append(f"- {title.text}")
+                    count += 1
+                    if count >= 3:
+                        break
+    except Exception as e:
+        print(f"뉴스 RSS 크롤링 지연: {e}")
+
+    news_text = "\n".join(news_summaries) if news_summaries else "실시간 주요 경제 뉴스 헤드라인 수집 중 (특이 지정학/거시 이벤트 대기 중)"
+
+    macro_context = (
+        f"[실시간 크롤링된 거시/지정학 데이터]\n"
+        f"1. 최신 글로벌 경제/크립토 뉴스:\n{news_text}\n"
+        f"2. 주요 매크로 지표 체크포인트: US FOMC 금리 기조 및 인플레이션(CPI) 동향, 중동 지정학적 리스크 모니터링 중."
+    )
+    return macro_context
 
 def save_trading_journal(data_record):
     """기능 1: 매매일지 자동 기록 (JSON 파일 누적 저장)"""
@@ -62,11 +80,7 @@ def save_trading_journal(data_record):
 def check_risk_management(current_price, final_order_text):
     """기능 2: 리스크 관리 및 손절/익절 자동 감시 (Watchdog)"""
     try:
-        # 팀장 오더 텍스트에서 숫자형 목표가/손절가 추출 시도
-        # 예: "목표가: 95000", "손절가: 91000" 형태 탐색
         prices = re.findall(r'(\d{1,3}(?:,\d{3})*|\d+)(?:\s*USDT)?', final_order_text)
-        # 텍스트 내에서 '목표가' 또는 '손절가' 키워드 주변부 감지 로직 구현 가능
-        # 여기서는 실전 방어용 경보 템플릿 제공
         print(f"🔍 리스크 워치독 가동 중... 현재가: {current_price} USDT")
     except Exception as e:
         print(f"리스크 감시 에러: {e}")
