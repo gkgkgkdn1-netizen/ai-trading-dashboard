@@ -6,10 +6,10 @@ import urllib.parse
 import json
 from google import genai
 
-# API 키 및 설정
+# API 키 및 설정 (공백 제거 및 안전 처리)
 MY_GEMINI_KEY = os.environ.get("RAW_KEY", "").strip().replace("\n", "").replace("\r", "")
-TELEGRAM_BOT_TOKEN = "8302782835"
-TELEGRAM_CHAT_ID = "@MokDongPeople"
+TELEGRAM_BOT_TOKEN = "8923714208:AAH3sH-BHlAeDdfWz6n-kalVBS4awb_C-Y0".strip()
+TELEGRAM_CHAT_ID = "8302782835".strip()
 COIN_SYMBOL = "BTC/USDT:USDT"
 
 client = genai.Client(api_key=MY_GEMINI_KEY) if MY_GEMINI_KEY else None
@@ -20,8 +20,11 @@ def send_telegram_message(message):
         data = urllib.parse.urlencode({'chat_id': TELEGRAM_CHAT_ID, 'text': message}).encode('utf-8')
         req = urllib.request.Request(url, data=data)
         with urllib.request.urlopen(req) as response:
-            return json.loads(response.read().decode()).get('ok', False)
-    except Exception:
+            res_body = json.loads(response.read().decode())
+            print(f"텔레그램 응답 결과: {res_body}")
+            return res_body.get('ok', False)
+    except Exception as e:
+        print(f"텔레그램 전송 중 예외 발생: {e}")
         return False
 
 def run_bot():
@@ -60,7 +63,7 @@ def run_bot():
             opinions[name] = res.text
         except Exception as e:
             opinions[name] = f"분석 실패: {e}"
-        time.sleep(8) # Rate Limit 방지용 8초 대기
+        time.sleep(4) # Rate Limit 방지용 4초 대기
 
     print("3. 팀장 최종 오더 도출 중...")
     all_opinions = "\n\n".join([f"[{k}]\n{v}" for k, v in opinions.items()])
@@ -70,8 +73,12 @@ def run_bot():
         leader_res = client.models.generate_content(model='gemini-3.6-flash', contents=leader_prompt)
         final_order = leader_res.text
         telegram_message = f"🚨 [AI 트레이딩 팀 자동 정시 브리핑] 🚨\n\n현재 BTC 가격: {current_price} USDT\n\n{final_order}"
-        send_telegram_message(telegram_message)
-        print("✅ 텔레그램 전송 완료!")
+        
+        success = send_telegram_message(telegram_message)
+        if success:
+            print("✅ 텔레그램 전송 완료!")
+        else:
+            print("❌ 텔레그램 전송 실패 (토큰이나 채널 ID를 확인하세요)")
     except Exception as e:
         print(f"팀장 오더 에러: {e}")
 
