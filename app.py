@@ -142,7 +142,7 @@ if run_button:
             
             try:
                 response = client.models.generate_content(
-                    model='gemini-2.5-flash',
+                    model='gemini-3.6-flash',
                     contents=prompt
                 )
                 opinions[name] = response.text
@@ -178,7 +178,7 @@ if run_button:
 
         try:
             leader_decision = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.6-flash',
                 contents=leader_prompt
             )
             final_order_text = leader_decision.text
