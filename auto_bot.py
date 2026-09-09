@@ -8,7 +8,7 @@ from google import genai
 
 # API 키 및 설정
 MY_GEMINI_KEY = os.environ.get("RAW_KEY", "").strip().replace("\n", "").replace("\r", "")
-TELEGRAM_BOT_TOKEN = "8923714208:AAH3sH-BHlAeDdfWz6n-kalVBS4awb_C-Y0"
+TELEGRAM_BOT_TOKEN = "8302782835"
 TELEGRAM_CHAT_ID = "@MokDongPeople"
 COIN_SYMBOL = "BTC/USDT:USDT"
 
@@ -56,7 +56,7 @@ def run_bot():
     for name, role in experts_roles.items():
         prompt = f"너는 {role}\n다음 상황을 보고 포지션(롱/숏/관망)을 추천하고 3줄로 브리핑해.\n[상황]\n{market_data}"
         try:
-            res = client.models.generate_content(model='gemini-3.6-pro', contents=prompt)
+            res = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
             opinions[name] = res.text
         except Exception as e:
             opinions[name] = f"분석 실패: {e}"
@@ -67,7 +67,7 @@ def run_bot():
     leader_prompt = f"너는 30년 경력 팀장. 아래 의견을 종합하여 롱/숏/관망 중 하나를 결정해.\n[의견]\n{all_opinions}\n[양식]\n1. 최종 결정:\n2. 권장 레버리지:\n3. 진입 타점:\n4. 목표가/손절가:\n5. 근거 요약:"
     
     try:
-        leader_res = client.models.generate_content(model='gemini-3.6-pro', contents=leader_prompt)
+        leader_res = client.models.generate_content(model='gemini-3.6-flash', contents=leader_prompt)
         final_order = leader_res.text
         telegram_message = f"🚨 [AI 트레이딩 팀 자동 정시 브리핑] 🚨\n\n현재 BTC 가격: {current_price} USDT\n\n{final_order}"
         send_telegram_message(telegram_message)

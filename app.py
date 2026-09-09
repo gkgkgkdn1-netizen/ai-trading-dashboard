@@ -28,7 +28,7 @@ MY_GEMINI_KEY = api_key.strip().replace("\n", "").replace("\r", "")
 
 # 텔레그램 봇 토큰과 본인의 채팅 ID를 입력하세요
 TELEGRAM_BOT_TOKEN = "8923714208:AAH3sH-BHlAeDdfWz6n-kalVBS4awb_C-Y0"
-TELEGRAM_CHAT_ID = "@MokDongPeople"
+TELEGRAM_CHAT_ID = "8302782835"
 # ==========================================================
 
 # 제미나이 클라이언트 초기화
