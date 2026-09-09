@@ -1,7 +1,19 @@
 import os
 import streamlit as st
+import ccxt
+import time
+import urllib.request
+import urllib.parse
+import json
+from google import genai
 
-# Streamlit secrets 또는 환경변수에서 안전하게 API 키 가져오기
+# 웹페이지 기본 설정 (와이드 모드)
+st.set_page_config(page_title="7인의 AI 트레이딩 팀 대시보드", page_icon="📈", layout="wide")
+
+st.title("🚀 7인의 AI 전문가 팀 & 실시간 트레이딩 대시보드")
+st.markdown("---")
+
+# ==================== [안전한 API 키 및 설정 영역] ====================
 api_key = ""
 try:
     if "RAW_KEY" in st.secrets:
@@ -11,34 +23,21 @@ except Exception:
 
 if not api_key:
     api_key = os.environ.get("RAW_KEY", "")
-import streamlit as st
-import ccxt
-import time
-import urllib.request
-import urllib.parse
-import json
-from google import genai
 
-# ==================== [사용자 설정 영역] ====================
-RAW_KEY = ""
-MY_GEMINI_KEY = RAW_KEY.strip().replace("\n", "").replace("\r", "")
+MY_GEMINI_KEY = api_key.strip().replace("\n", "").replace("\r", "")
 
 # 텔레그램 봇 토큰과 본인의 채팅 ID를 입력하세요
 TELEGRAM_BOT_TOKEN = "8923714208:AAH3sH-BHlAeDdfWz6n-kalVBS4awb_C-Y0"
 TELEGRAM_CHAT_ID = "@MokDongPeople"
 # ==========================================================
 
-# 웹페이지 기본 설정 (와이드 모드)
-st.set_page_config(page_title="7인의 AI 트레이딩 팀 대시보드", page_icon="📈", layout="wide")
-
-st.title("🚀 7인의 AI 전문가 팀 & 실시간 트레이딩 대시보드")
-st.markdown("---")
-
 # 제미나이 클라이언트 초기화
-try:
-    client = genai.Client(api_key=MY_GEMINI_KEY)
-except Exception as e:
-    client = None
+client = None
+if MY_GEMINI_KEY:
+    try:
+        client = genai.Client(api_key=MY_GEMINI_KEY)
+    except Exception as e:
+        client = None
 
 # 텔레그램 발송 함수
 def send_telegram_message(message):
@@ -143,7 +142,7 @@ if run_button:
             
             try:
                 response = client.models.generate_content(
-                    model='gemini-3.6-flash',
+                    model='gemini-2.5-flash',
                     contents=prompt
                 )
                 opinions[name] = response.text
@@ -179,7 +178,7 @@ if run_button:
 
         try:
             leader_decision = client.models.generate_content(
-                model='gemini-3.6-flash',
+                model='gemini-2.5-flash',
                 contents=leader_prompt
             )
             final_order_text = leader_decision.text
