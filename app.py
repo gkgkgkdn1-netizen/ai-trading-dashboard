@@ -151,7 +151,7 @@ if run_button:
                 opinions[name] = "일시적 혼잡으로 분석 지연"
                 expert_slots[name].error(f"⚠️ 분석 실패 또는 할당량 초과")
             
-            time.sleep(2)
+            time.sleep(8)
 
         # 3. 팀장 최종 오더 도출 및 텔레그램 전송
         order_placeholder.warning("👑 팀장이 전문가들의 의견을 취합하여 최종 오더를 내리고 있습니다...")
