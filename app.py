@@ -1,3 +1,16 @@
+import os
+import streamlit as st
+
+# Streamlit secrets 또는 환경변수에서 안전하게 API 키 가져오기
+api_key = ""
+try:
+    if "RAW_KEY" in st.secrets:
+        api_key = st.secrets["RAW_KEY"]
+except Exception:
+    pass
+
+if not api_key:
+    api_key = os.environ.get("RAW_KEY", "")
 import streamlit as st
 import ccxt
 import time
