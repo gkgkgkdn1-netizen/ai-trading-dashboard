@@ -66,14 +66,14 @@ def save_trading_journal(data_record):
 # ==========================================
 st.set_page_config(page_title="AI 트레이딩 봇", page_icon="🤖", layout="wide")
 st.title("🤖 AI 트레이딩 봇 실시간 대시보드")
-st.write("깃허브 스케줄과 별개로, **원할 때 언제든 아래 버튼을 눌러 실시간 시장 분석을 진행**할 수 있습니다.")
+st.write("유료 결제 완료! **속도 제한 없이 즉시 분석**이 가능합니다.")
 
-if st.button("🚀 지금 즉시 브리핑 분석 실행", type="primary"):
+if st.button("🚀 지금 즉시 칼칼한 브리핑 실행", type="primary"):
     if not client:
-        st.error("API 키가 없습니다. 터미널 환경 변수(RAW_KEY)를 확인해 주세요.")
+        st.error("API 키가 없습니다. 환경 변수를 확인해 주세요.")
         st.stop()
 
-    with st.status("AI 트레이딩 시스템 가동 중...", expanded=True) as status:
+    with st.status("유료 고속 모드로 분석 진행 중...", expanded=True) as status:
         st.write("📊 1. 거래소 데이터 및 매크로 지표 수집 중...")
         try:
             exchange = ccxt.bitget()
@@ -94,7 +94,7 @@ if st.button("🚀 지금 즉시 브리핑 분석 실행", type="primary"):
             st.error(f"데이터 수집 실패: {e}")
             st.stop()
 
-        st.write("🧠 2. 7인 AI 전문가 심층 회의 진행 중 (약 30초 소요)...")
+        st.write("🧠 2. 7인 AI 전문가 초고속 심층 회의 진행 중...")
         experts_roles = {
             "단타 전문가": "10년 경력 단타 전문가. VWAP, 오더블록, RSI 활용.",
             "스캘핑 전문가": "10년 경력 스캘핑 전문가. 펀딩비와 호가창 돌파 타점 활용.",
@@ -118,13 +118,13 @@ if st.button("🚀 지금 즉시 브리핑 분석 실행", type="primary"):
                 else:
                     opinions[name] = "분석 내용 없음"
             except Exception as e:
-                opinions[name] = "API 할당량 초과 또는 분석 지연"
+                opinions[name] = f"분석 오류: {e}"
             
             progress_bar.progress((i + 1) / len(experts_roles))
-            time.sleep(4) # Rate Limit 방어
+            time.sleep(1) # 유료 등급이므로 1초면 충분합니다!
 
         if success_count < 3:
-            st.warning("⚠️ 구글 API 무료 할당량 부족으로 전문가 의견을 충분히 모으지 못해 분석을 중단합니다.")
+            st.warning("⚠️ 전문가 의견 수집에 실패했습니다.")
             st.stop()
 
         st.write("👨‍💼 3. 팀장 의견 종합 및 텔레그램 전송 중...")
@@ -142,16 +142,14 @@ if st.button("🚀 지금 즉시 브리핑 분석 실행", type="primary"):
             }
             save_trading_journal(journal_record)
 
-            # 웹에서 버튼을 눌러도 텔레그램으로 쏴줍니다
-            tele_msg = f"🚨 [대시보드 수동 실행 브리핑] 🚨\n\n현재 BTC 가격: {current_price} USDT\n\n{final_order}"
+            tele_msg = f"🚨 [유료 고속 실시간 브리핑] 🚨\n\n현재 BTC 가격: {current_price} USDT\n\n{final_order}"
             send_telegram_message(tele_msg)
             
-            status.update(label="브리핑 분석 및 전송 완료!", state="complete", expanded=False)
+            status.update(label="초고속 브리핑 완료!", state="complete", expanded=False)
         except Exception as e:
             st.error(f"팀장 오더 생성 실패: {e}")
             st.stop()
 
-    # 결과 화면 출력
     st.divider()
     st.subheader("👨‍💼 팀장 최종 오더")
     st.success(final_order)
