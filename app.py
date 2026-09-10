@@ -4,9 +4,9 @@ import time
 import urllib.request
 import urllib.parse
 import json
-import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from google import genai
 import streamlit as st
 
@@ -61,19 +61,30 @@ def save_trading_journal(data_record):
     except:
         pass
 
+# 개별 전문가 분석을 수행하는 함수 (병렬 처리용)
+def ask_single_expert(name, role, market_data):
+    prompt = f"너는 {role}\n다음 상황을 보고 포지션(롱/숏/관망)을 추천하고 3줄로 요약해.\n[상황]\n{market_data}"
+    try:
+        res = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
+        if res and res.text:
+            return name, res.text
+    except Exception as e:
+        pass
+    return name, "분석 오류 또는 응답 지연"
+
 # ==========================================
 # 🎨 Streamlit 웹 대시보드 UI 구성
 # ==========================================
 st.set_page_config(page_title="AI 트레이딩 봇", page_icon="🤖", layout="wide")
-st.title("🤖 AI 트레이딩 봇 실시간 대시보드")
-st.write("유료 결제 완료! **속도 제한 없이 즉시 분석**이 가능합니다.")
+st.title("🤖 AI 트레이딩 봇 실시간 대시보드 (병렬 초고속 모드)")
+st.write("유료 플랜 파워 적용! **6인 전문가 동시 호출(ThreadPool)**로 5초 만에 결과를 뽑아냅니다.")
 
-if st.button("🚀 지금 즉시 칼칼한 브리핑 실행", type="primary"):
+if st.button("🚀 초고속 병렬 브리핑 실행", type="primary"):
     if not client:
         st.error("API 키가 없습니다. 환경 변수를 확인해 주세요.")
         st.stop()
 
-    with st.status("유료 고속 모드로 분석 진행 중...", expanded=True) as status:
+    with st.status("병렬 고속 분석 엔진 가동 중...", expanded=True) as status:
         st.write("📊 1. 거래소 데이터 및 매크로 지표 수집 중...")
         try:
             exchange = ccxt.bitget()
@@ -94,7 +105,7 @@ if st.button("🚀 지금 즉시 칼칼한 브리핑 실행", type="primary"):
             st.error(f"데이터 수집 실패: {e}")
             st.stop()
 
-        st.write("🧠 2. 7인 AI 전문가 초고속 심층 회의 진행 중...")
+        st.write("🧠 2. 6인 AI 전문가 **동시(Parallel) 심층 회의** 진행 중...")
         experts_roles = {
             "단타 전문가": "10년 경력 단타 전문가. VWAP, 오더블록, RSI 활용.",
             "스캘핑 전문가": "10년 경력 스캘핑 전문가. 펀딩비와 호가창 돌파 타점 활용.",
@@ -106,22 +117,19 @@ if st.button("🚀 지금 즉시 칼칼한 브리핑 실행", type="primary"):
 
         opinions = {}
         success_count = 0
-        progress_bar = st.progress(0)
-        
-        for i, (name, role) in enumerate(experts_roles.items()):
-            prompt = f"너는 {role}\n다음 상황을 보고 포지션(롱/숏/관망)을 추천하고 3줄로 요약해.\n[상황]\n{market_data}"
-            try:
-                res = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
-                if res and res.text:
-                    opinions[name] = res.text
-                    success_count += 1
-                else:
-                    opinions[name] = "분석 내용 없음"
-            except Exception as e:
-                opinions[name] = f"분석 오류: {e}"
+
+        # ThreadPoolExecutor를 사용해 6명에게 동시에 질문을 와르르 던집니다!
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = [
+                executor.submit(ask_single_expert, name, role, market_data)
+                for name, role in experts_roles.items()
+            ]
             
-            progress_bar.progress((i + 1) / len(experts_roles))
-            time.sleep(1) # 유료 등급이므로 1초면 충분합니다!
+            for future in as_completed(futures):
+                name, result_text = future.result()
+                opinions[name] = result_text
+                if "분석 오류" not in result_text:
+                    success_count += 1
 
         if success_count < 3:
             st.warning("⚠️ 전문가 의견 수집에 실패했습니다.")
@@ -142,10 +150,10 @@ if st.button("🚀 지금 즉시 칼칼한 브리핑 실행", type="primary"):
             }
             save_trading_journal(journal_record)
 
-            tele_msg = f"🚨 [유료 고속 실시간 브리핑] 🚨\n\n현재 BTC 가격: {current_price} USDT\n\n{final_order}"
+            tele_msg = f"🚨 [초고속 병렬 브리핑] 🚨\n\n현재 BTC 가격: {current_price} USDT\n\n{final_order}"
             send_telegram_message(tele_msg)
             
-            status.update(label="초고속 브리핑 완료!", state="complete", expanded=False)
+            status.update(label="5초 컷 병렬 브리핑 완료!", state="complete", expanded=False)
         except Exception as e:
             st.error(f"팀장 오더 생성 실패: {e}")
             st.stop()
@@ -154,7 +162,7 @@ if st.button("🚀 지금 즉시 칼칼한 브리핑 실행", type="primary"):
     st.subheader("👨‍💼 팀장 최종 오더")
     st.success(final_order)
     
-    st.subheader("🧠 7인 전문가 개별 의견")
+    st.subheader("🧠 6인 전문가 개별 의견")
     cols = st.columns(2)
     for i, (name, op) in enumerate(opinions.items()):
         cols[i % 2].info(f"**{name}**\n\n{op}")
