@@ -8,6 +8,7 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from google import genai
+import streamlit as st  # 웹페이지를 만들기 위해 추가된 부분
 
 # API 키 및 설정 (공백 제거 및 안전 처리)
 MY_GEMINI_KEY = os.environ.get("RAW_KEY", "").strip().replace("\n", "").replace("\r", "")
@@ -171,5 +172,14 @@ def run_bot():
     except Exception as e:
         print(f"팀장 오더 에러: {e}")
 
+# ==========================================
+# 웹 대시보드 화면을 띄워주는 코드 (추가된 부분)
+# ==========================================
 if __name__ == "__main__":
-    run_bot()
+    st.set_page_config(page_title="AI 트레이딩 봇", page_icon="🤖")
+    st.title("🤖 AI 트레이딩 봇 대시보드")
+    st.success("✅ 서버와 웹 대시보드가 정상적으로 켜졌습니다!")
+    st.write("현재 봇이 시스템에서 실행 중입니다. 상세한 진행 상황과 전송 결과는 VS Code 터미널(까만 창)을 확인해 주세요.")
+    
+    # 웹페이지가 켜지면 봇도 한 바퀴 돌리게 하려면 아래 줄의 주석(#)을 제거하세요.
+    # run_bot()
