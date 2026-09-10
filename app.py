@@ -63,7 +63,7 @@ def save_trading_journal(data_record):
 
 # 개별 전문가 분석을 수행하는 함수 (병렬 처리용)
 def ask_single_expert(name, role, market_data):
-    prompt = f"너는 {role}\n다음 상황을 보고 포지션(롱/숏/관망)을 추천하고 3줄로 요약해.\n[상황]\n{market_data}"
+    prompt = f"너는 {role}\n다음 상황을 보고 포지션(롱/숏/관망)을 추천하고 핵심을 요약해.\n[상황]\n{market_data}"
     try:
         res = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
         if res and res.text:
@@ -76,15 +76,15 @@ def ask_single_expert(name, role, market_data):
 # 🎨 Streamlit 웹 대시보드 UI 구성
 # ==========================================
 st.set_page_config(page_title="AI 트레이딩 봇", page_icon="🤖", layout="wide")
-st.title("🤖 AI 트레이딩 봇 실시간 대시보드 (병렬 초고속 모드)")
-st.write("유료 플랜 파워 적용! **6인 전문가 동시 호출(ThreadPool)**로 5초 만에 결과를 뽑아냅니다.")
+st.title("🤖 AI 트레이딩 봇 실시간 대시보드 (듀얼 브리핑 모드)")
+st.write("유료 플랜 파워 적용! **단타용 / 추세용 듀얼 오더**를 동시 생성합니다.")
 
-if st.button("🚀 초고속 병렬 브리핑 실행", type="primary"):
+if st.button("🚀 듀얼 브리핑 즉시 실행", type="primary"):
     if not client:
         st.error("API 키가 없습니다. 환경 변수를 확인해 주세요.")
         st.stop()
 
-    with st.status("병렬 고속 분석 엔진 가동 중...", expanded=True) as status:
+    with st.status("듀얼 분석 엔진 가동 중...", expanded=True) as status:
         st.write("📊 1. 거래소 데이터 및 매크로 지표 수집 중...")
         try:
             exchange = ccxt.bitget()
@@ -105,10 +105,10 @@ if st.button("🚀 초고속 병렬 브리핑 실행", type="primary"):
             st.error(f"데이터 수집 실패: {e}")
             st.stop()
 
-        st.write("🧠 2. 6인 AI 전문가 **동시(Parallel) 심층 회의** 진행 중...")
+        st.write("🧠 2. 6인 AI 전문가 **동시 심층 회의** 진행 중...")
         experts_roles = {
-            "단타 전문가": "10년 경력 단타 전문가. VWAP, 오더블록, RSI 활용.",
-            "스캘핑 전문가": "10년 경력 스캘핑 전문가. 펀딩비와 호가창 돌파 타점 활용.",
+            "단타 전문가": "10년 경력 초단타/스캘핑 전문가. VWAP, 오더블록, RSI 활용.",
+            "스캘핑 전문가": "10년 경력 오더북/펀딩비 스캘퍼. 호가창 돌파 타점 집중.",
             "스윙 전문가": "10년 경력 스윙 전문가. 단기 추세매매 파동 집중.",
             "추세매매 전문가": "10년 경력 추세매매 전문가. 다중 타임프레임 추세 분석.",
             "거시경제 전문가": "30년 경력 거시경제 전문가. 금리와 유동성 분석.",
@@ -118,7 +118,6 @@ if st.button("🚀 초고속 병렬 브리핑 실행", type="primary"):
         opinions = {}
         success_count = 0
 
-        # ThreadPoolExecutor를 사용해 6명에게 동시에 질문을 와르르 던집니다!
         with ThreadPoolExecutor(max_workers=6) as executor:
             futures = [
                 executor.submit(ask_single_expert, name, role, market_data)
@@ -135,34 +134,53 @@ if st.button("🚀 초고속 병렬 브리핑 실행", type="primary"):
             st.warning("⚠️ 전문가 의견 수집에 실패했습니다.")
             st.stop()
 
-        st.write("👨‍💼 3. 팀장 의견 종합 및 텔레그램 전송 중...")
+        st.write("👨‍💼 3. [단타용] 및 [추세용] 듀얼 팀장 오더 생성 및 전송 중...")
         all_opinions = "\n\n".join([f"[{k}]\n{v}" for k, v in opinions.items()])
-        leader_prompt = f"너는 30년 경력 팀장. 아래 의견을 종합하여 롱/숏/관망 중 하나를 결정해.\n[의견]\n{all_opinions}\n[양식]\n1. 최종 결정:\n2. 권장 레버리지:\n3. 진입 타점:\n4. 목표가/손절가:\n5. 근거 요약:"
         
+        # 1. 단타 팀장 프롬프트
+        scap_prompt = f"너는 공격적인 수십억 원 운용 수석 단타/스캘핑 팀장. 아래 전문가 의견을 바탕으로 1분~15분봉 기준 초단타 타점을 짜줘.\n[의견]\n{all_opinions}\n[양식]\n1. 단타 방향 (롱/숏):\n2. 추천 레버리지 (고배율 위주):\n3. 진입 타점:\n4. 칼손절가/익절가:\n5. 단타 타점 핵심 근거:"
+        
+        # 2. 추세 팀장 프롬프트
+        trend_prompt = f"너는 안정적인 수십억 원 운용 수석 추세매매/스윙 팀장. 아래 전문가 의견을 바탕으로 1시간~4시간봉 기준 거시/추세 방향을 짜줘.\n[의견]\n{all_opinions}\n[양식]\n1. 추세 방향 (롱/숏/관망):\n2. 추천 레버리지 (안정형):\n3. 분할 진입 구간:\n4. 목표가/손절가:\n5. 추세 분석 근거:"
+
         try:
-            leader_res = client.models.generate_content(model='gemini-3.6-flash', contents=leader_prompt)
-            final_order = leader_res.text
+            # 듀얼 오더 동시 생성
+            res_scap = client.models.generate_content(model='gemini-3.6-flash', contents=scap_prompt)
+            res_trend = client.models.generate_content(model='gemini-3.6-flash', contents=trend_prompt)
+            
+            scap_order = res_scap.text
+            trend_order = res_trend.text
             
             journal_record = {
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "price": current_price,
-                "order_result": final_order
+                "scap_result": scap_order,
+                "trend_result": trend_order
             }
             save_trading_journal(journal_record)
 
-            # 📱 전문가별 개별 의견과 팀장 최종 오더를 모두 텔레그램으로 전송하도록 수정된 부분
-            all_opinions_text = "\n\n".join([f"[{name}]\n{op}" for name, op in opinions.items()])
-            tele_msg = f"🚨 [초고속 병렬 브리핑] 🚨\n\n현재 BTC 가격: {current_price} USDT\n\n{all_opinions_text}\n\n====================\n\n{final_order}"
-            send_telegram_message(tele_msg)
+            # 텔레그램 메시지 2개로 분할 전송
+            tele_msg_scap = f"⚡ [1분~15분봉 초단타/스캘핑 브리핑] ⚡\n\n현재 BTC 가격: {current_price} USDT\n\n{scap_order}"
+            tele_msg_trend = f"📈 [1시간~4시간봉 메이저 추세 브리핑] 📈\n\n현재 BTC 가격: {current_price} USDT\n\n{trend_order}"
             
-            status.update(label="5초 컷 병렬 브리핑 완료!", state="complete", expanded=False)
+            send_telegram_message(tele_msg_scap)
+            time.sleep(0.5) # 메시지 순서 꼬임 방지 미세 딜레이
+            send_telegram_message(tele_msg_trend)
+            
+            status.update(label="듀얼 초고속 브리핑 전송 완료!", state="complete", expanded=False)
         except Exception as e:
             st.error(f"팀장 오더 생성 실패: {e}")
             st.stop()
 
     st.divider()
-    st.subheader("👨‍💼 팀장 최종 오더")
-    st.success(final_order)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("⚡ [단타용] 팀장 오더")
+        st.success(scap_order)
+    with col2:
+        st.subheader("📈 [추세용] 팀장 오더")
+        st.info(trend_order)
     
     st.subheader("🧠 6인 전문가 개별 의견")
     cols = st.columns(2)
