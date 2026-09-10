@@ -150,7 +150,9 @@ if st.button("🚀 초고속 병렬 브리핑 실행", type="primary"):
             }
             save_trading_journal(journal_record)
 
-            tele_msg = f"🚨 [초고속 병렬 브리핑] 🚨\n\n현재 BTC 가격: {current_price} USDT\n\n{final_order}"
+            # 📱 전문가별 개별 의견과 팀장 최종 오더를 모두 텔레그램으로 전송하도록 수정된 부분
+            all_opinions_text = "\n\n".join([f"[{name}]\n{op}" for name, op in opinions.items()])
+            tele_msg = f"🚨 [초고속 병렬 브리핑] 🚨\n\n현재 BTC 가격: {current_price} USDT\n\n{all_opinions_text}\n\n====================\n\n{final_order}"
             send_telegram_message(tele_msg)
             
             status.update(label="5초 컷 병렬 브리핑 완료!", state="complete", expanded=False)
