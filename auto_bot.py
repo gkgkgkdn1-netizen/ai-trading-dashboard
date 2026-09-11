@@ -20,13 +20,18 @@ JOURNAL_FILE = "trading_journal.json"
 
 client = genai.Client(api_key=MY_GEMINI_KEY) if MY_GEMINI_KEY else None
 
+# 만약을 대비한 안전장치는 남겨두되, 기본적으로 원본 그대로 전송되도록 처리
 def send_telegram_message(message):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        data = urllib.parse.urlencode({'chat_id': TELEGRAM_CHAT_ID, 'text': message}).encode('utf-8')
-        req = urllib.request.Request(url, data=data)
-        with urllib.request.urlopen(req) as response:
-            return json.loads(response.read().decode()).get('ok', False)
+        chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
+        for chunk in chunks:
+            data = urllib.parse.urlencode({'chat_id': TELEGRAM_CHAT_ID, 'text': chunk}).encode('utf-8')
+            req = urllib.request.Request(url, data=data)
+            with urllib.request.urlopen(req) as response:
+                pass
+            time.sleep(0.5)
+        return True
     except:
         return False
 
@@ -46,7 +51,6 @@ def fetch_tradfi_data():
 def fetch_macro_news():
     news_summaries = []
     try:
-        # CPI, PPI, FOMC, 트럼프, Clarity Act(미국 디지털 자산 입법) 등 특정 키워드 뉴스 수집
         query = urllib.parse.quote("Bitcoin OR FOMC OR CPI OR PPI OR 트럼프 OR Clarity Act")
         rss_url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
         req = urllib.request.Request(rss_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -156,7 +160,6 @@ if st.button("🚀 실전 듀얼 브리핑 즉시 실행", type="primary"):
 
         st.write("👨‍💼 [4단계] 듀얼 팀장 엄격 검열 및 오더 생성 중...")
         
-        # 확실한 자리 아니면 관망하라는 매우 엄격한 지시 추가
         scap_prompt = f"너는 수십억 운용 수석 스캘핑 팀장. 아래 모든 분석을 10회 이상 검토하라. 승률이 확실치 않거나 근거가 상충하면 무조건 '관망(No Position)'을 지시하라. 포지션 진입 시 숏(Short)도 적극 고려하라.\n[의견]\n{all_opinions_text}\n[양식]\n1. 단타 방향 (롱/숏/관망):\n2. 레버리지:\n3. 진입 타점:\n4. 칼손절가/익절가:\n5. 핵심 근거:"
         trend_prompt = f"너는 단기 스윙/추세 수석 팀장. 아래 모든 분석을 10회 이상 검토하라. 변곡점이 불확실하면 억지로 타점을 주지 말고 '관망'하라. 1~2주 내 쇼부 보는 타점만 잡아라.\n[의견]\n{all_opinions_text}\n[양식]\n1. 스윙 방향 (롱/숏/관망):\n2. 레버리지:\n3. 진입 타점:\n4. 목표가/손절가:\n5. 핵심 근거:"
 
@@ -175,9 +178,21 @@ if st.button("🚀 실전 듀얼 브리핑 즉시 실행", type="primary"):
             }
             save_trading_journal(journal_record)
 
-            tele_msg_scap = f"⚡ [단타/스캘핑 브리핑 (엄격 검열)] ⚡\n\n현재 BTC 가격: {current_price} USDT\n\n{all_opinions_text}\n\n====================\n\n[단타 팀장 최종 오더]\n{scap_order}"
-            tele_msg_trend = f"📈 [단기 스윙 브리핑 (엄격 검열)] 📈\n\n현재 BTC 가격: {current_price} USDT\n\n[스윙 팀장 최종 오더]\n{trend_order}"
+            # 📱 텔레그램 메시지 2명씩 논리적 그룹화 전송
+            msg_group1 = f"🌍 [1/3] 거시 & 지정학 관점\n\n[거시경제 전문가]\n{all_opinions_dict.get('거시경제 전문가', '')}\n\n[지정학 리스크 전문가]\n{all_opinions_dict.get('지정학 리스크 전문가', '')}"
+            msg_group2 = f"⚡ [2/3] 초단타 & 단타 관점\n\n[스캘핑 전문가]\n{all_opinions_dict.get('스캘핑 전문가', '')}\n\n[단타 전문가]\n{all_opinions_dict.get('단타 전문가', '')}"
+            msg_group3 = f"🌊 [3/3] 스윙 & 추세 관점\n\n[단기 스윙 전문가]\n{all_opinions_dict.get('단기 스윙 전문가', '')}\n\n[추세매매 전문가]\n{all_opinions_dict.get('추세매매 전문가', '')}"
             
+            tele_msg_scap = f"🔥 [최종 오더: 단타/스캘핑 팀장] 🔥\n\n현재 BTC 가격: {current_price} USDT\n\n{scap_order}"
+            tele_msg_trend = f"📈 [최종 오더: 단기 스윙 팀장] 📈\n\n현재 BTC 가격: {current_price} USDT\n\n{trend_order}"
+            
+            # 순차적으로 발송 (순서 꼬임 방지)
+            send_telegram_message(msg_group1)
+            time.sleep(1)
+            send_telegram_message(msg_group2)
+            time.sleep(1)
+            send_telegram_message(msg_group3)
+            time.sleep(1)
             send_telegram_message(tele_msg_scap)
             time.sleep(1)
             send_telegram_message(tele_msg_trend)
@@ -195,3 +210,22 @@ if st.button("🚀 실전 듀얼 브리핑 즉시 실행", type="primary"):
     with col2:
         st.subheader("📈 [단기 스윙용] 팀장 오더")
         st.info(trend_order)
+        
+    # 💻 웹 대시보드 UI를 보기 편하게 그룹별로 정리
+    st.divider()
+    st.subheader("🧠 6인 전문가 개별 심층 분석")
+    
+    st.markdown("#### 🌍 1. 거시 / 지정학 리스크 관점")
+    c1, c2 = st.columns(2)
+    with c1: st.info(f"**거시경제 전문가**\n\n{all_opinions_dict.get('거시경제 전문가', '')}")
+    with c2: st.warning(f"**지정학 리스크 전문가**\n\n{all_opinions_dict.get('지정학 리스크 전문가', '')}")
+
+    st.markdown("#### ⚡ 2. 초단타 / 스캘핑 관점")
+    c3, c4 = st.columns(2)
+    with c3: st.success(f"**스캘핑 전문가**\n\n{all_opinions_dict.get('스캘핑 전문가', '')}")
+    with c4: st.success(f"**단타 전문가**\n\n{all_opinions_dict.get('단타 전문가', '')}")
+
+    st.markdown("#### 🌊 3. 스윙 / 추세매매 관점")
+    c5, c6 = st.columns(2)
+    with c5: st.error(f"**단기 스윙 전문가**\n\n{all_opinions_dict.get('단기 스윙 전문가', '')}")
+    with c6: st.error(f"**추세매매 전문가**\n\n{all_opinions_dict.get('추세매매 전문가', '')}")
