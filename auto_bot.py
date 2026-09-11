@@ -39,7 +39,10 @@ def send_telegram_message(message):
 
 def fetch_tradfi_data():
     try:
-        tickers = {"나스닥": "NQ=F", "원유": "CL=F", "달러인덱스": "DX-Y.NYB", "미 국채10년": "^TNX"}
+        tickers = {
+            "나스닥": "NQ=F", "원유(WTI)": "CL=F", "달러인덱스(DXY)": "DX-Y.NYB", 
+            "미 국채 2년물": "^IRX", "미 국채 10년물": "^TNX", "미 국채 30년물": "^TYX"
+        }
         results = []
         is_weekend = False
         for name, symbol in tickers.items():
@@ -54,24 +57,43 @@ def fetch_tradfi_data():
         
         output = "\n".join(results)
         if is_weekend:
-            output += "\n💡 [알림] 현재 주말/휴장으로 전통금융 지표 정지 상태. 코인 수급에 집중할 것."
+            output += "\n💡 [알림] 주말 휴장으로 전통금융 자산 정지 상태. 코인 자체 수급 및 지정학 이슈에 집중할 것."
         return output
     except: return "전통금융 수집 지연"
 
+# 🛑 [핵심 패치] 중요도 순서대로 3단계 나누어 정보 수집 (밀림 현상 원천 차단)
 def fetch_macro_news():
-    news_summaries = []
+    tier1_news = [] # Tier 1: FOMC, 금리, 국채바이백, CPI/PPI
+    tier2_news = [] # Tier 2: 지정학적 리스크, 에너지(유급/가스), 공급망
+    
+    # 1단계: 통화정책 및 거시 유동성 이슈 (가장 중요)
     try:
-        query = urllib.parse.quote("CPI OR PPI OR FOMC OR Bitcoin")
-        req = urllib.request.Request(f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR", headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            root = ET.fromstring(response.read())
-            for count, item in enumerate(root.findall('.//item')):
+        url1 = f"https://news.google.com/rss/search?q={urllib.parse.quote('FOMC OR 기준금리 OR 국채 바이백 OR 연준 OR CPI OR PPI')}&hl=ko&gl=KR"
+        req1 = urllib.request.Request(url1, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req1, timeout=3) as resp1:
+            root1 = ET.fromstring(resp1.read())
+            for i, item in enumerate(root1.findall('.//item')):
                 title = item.find('title')
                 if title is not None and title.text:
-                    news_summaries.append(f"- {title.text}")
-                if count >= 5: break
+                    tier1_news.append(f"- [통화/정책] {title.text}")
+                if i >= 2: break
     except: pass
-    return "\n".join(news_summaries)
+
+    # 2단계: 지정학적 리스크 및 원유/에너지 이슈
+    try:
+        url2 = f"https://news.google.com/rss/search?q={urllib.parse.quote('지정학 리스크 OR 중동 전쟁 OR 원유 가격 OR 공급망 위기 OR 전쟁')}&hl=ko&gl=KR"
+        req2 = urllib.request.Request(url2, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req2, timeout=3) as resp2:
+            root2 = ET.fromstring(resp2.read())
+            for i, item in enumerate(root2.findall('.//item')):
+                title = item.find('title')
+                if title is not None and title.text:
+                    tier2_news.append(f"- [지정학/에너지] {title.text}")
+                if i >= 2: break
+    except: pass
+
+    combined = tier1_news + tier2_news
+    return "\n".join(combined) if combined else "매크로 이슈 수집 대기 중"
 
 def generate_ai_feedback(current_price):
     if not os.path.exists(JOURNAL_FILE): return "과거 기록 없음"
@@ -135,7 +157,7 @@ def get_multi_tf_quant(exchange):
             
             vsa_status = "정상"
             if last['volume'] > vol_sma.iloc[-1] * 1.5 and last['body'] < df['body'].mean() * 0.5:
-                vsa_status = "🚨 VSA 이상 감지: 대량 거래량 + 짧은 캔들 (변곡 확률 극상)"
+                vsa_status = "🚨 VSA 이상 감지 (매수/매도 브레이크)"
 
             quant_data[tf] = {"rsi": last['rsi'], "poc": poc_price, "atr": last['atr'], "trend": trend, "vsa": vsa_status}
         except Exception as e:
@@ -182,15 +204,15 @@ def get_market_data():
         f"걸려있는 호가(OBI): {obi_status}\n"
         f"🐋 스마트머니 흐름: {whale_status}\n\n"
         f"💻 [다중시간대 퀀트 팩트]\n{quant_report}\n\n"
-        f"🌐 [글로벌 매크로]\n{fetch_tradfi_data()}\n\n"
-        f"[뉴스]\n{fetch_macro_news()}"
+        f"🌐 [글로벌 매크로 (달러/원유/2년·10년·30년 국채)]\n{fetch_tradfi_data()}\n\n"
+        f"📰 [중요도 순차 수집된 매크로/FOMC/지정학 뉴스]\n{fetch_macro_news()}"
     )
     return btc_price, raw_data, generate_ai_feedback(btc_price)
 
 def generate_and_send_briefing(current_price, raw_data, ai_report):
     macro_geo = {
-        "거시": ("거시 퀀트. 매크로 자산이 코인에 주는 수급 압박 분석.", 0),
-        "지정학": ("전통금융과 코인의 커플링/디커플링 팩트 확인.", 0.5) 
+        "거시": ("거시 퀀트. 달러, 원유, 미 국채 2/10/30년 금리, 국채 바이백, FOMC 이슈가 비트코인 수급에 주는 압박을 분석하라.", 0),
+        "지정학": ("지정학적 리스크와 공급망 위기가 글로벌 자산 및 크립토에 미치는 영향을 분석하라.", 0.5) 
     }
     
     foundations = {}
@@ -216,17 +238,15 @@ def generate_and_send_briefing(current_price, raw_data, ai_report):
             techs[name] = res
     all_ctx = "\n\n".join([f"[{k}]\n{v}" for k, v in {**foundations, **techs}.items()])
     
-    s_prompt = f"수석 스캘퍼. [AI 피드백] 철저 수용. 🐋고래 Taker와 거시 자산을 팩트로만 판단. 손절가 ATR(변동폭) 적용 필수.\n\n[피드백]\n{ai_report}\n\n[의견]\n{all_ctx}\n[양식]\n1. 리스크 & 스마트머니 점검:\n2. 방향 (롱/숏/관망):\n3. 레버리지:\n4. 진입가 (POC 매물대 기준):\n5. 손절/익절 (ATR 폭 반영):"
-    t_prompt = f"스윙 팀장. [AI 피드백] 철저 수용. 글로벌 자산 흐름과 4H POC 중심 타점. 불확실하면 관망.\n\n[피드백]\n{ai_report}\n\n[의견]\n{all_ctx}\n[양식]\n1. 리스크 & 글로벌매크로 점검:\n2. 방향 (롱/숏/관망):\n3. 레버리지:\n4. 진입가 (POC 매물대 기준):\n5. 손절/익절 (ATR 폭 반영):"
+    s_prompt = f"수석 스캘퍼. [AI 피드백] 수용. 🐋고래 Taker와 거시 자산을 팩트로만 판단. 손절가 ATR(변동폭) 적용 필수.\n\n[피드백]\n{ai_report}\n\n[의견]\n{all_ctx}\n[양식]\n1. 리스크 & 스마트머니 점검:\n2. 방향 (롱/숏/관망):\n3. 레버리지:\n4. 진입가 (POC 매물대 기준):\n5. 손절/익절 (ATR 폭 반영):"
+    t_prompt = f"스윙 팀장. [AI 피드백] 수용. 금리/글로벌 흐름과 4H POC 중심 타점. 불확실하면 관망.\n\n[피드백]\n{ai_report}\n\n[의견]\n{all_ctx}\n[양식]\n1. 리스크 & 글로벌매크로 점검:\n2. 방향 (롱/숏/관망):\n3. 레버리지:\n4. 진입가 (POC 매물대 기준):\n5. 손절/익절 (ATR 폭 반영):"
 
     with ThreadPoolExecutor(max_workers=2) as ex:
         s_ord = ex.submit(ask_expert, "단타", s_prompt, 0).result()[1]
         t_ord = ex.submit(ask_expert, "추세", t_prompt, 0.5).result()[1]
     
-    # 👑 [핵심 추가] 50년 경력의 전설적인 대표 AI 최종 검토 로직
-    ceo_prompt = f"""너는 월스트리트에서 50년간 살아남은 전설적인 퀀트 트레이딩 회사 대표(CEO)다. 
-아래 원본 팩트 데이터와 두 팀장(스캘핑, 스윙)의 보고서를 최종 검토하고 결단을 내려라. 
-팀장들의 의견이 충돌하거나 허점이 보이면 가차없이 수정 지시를 내려라.
+    ceo_prompt = f"""너는 월스트리트에서 50년간 살아남은 전설적인 퀀트 CEO다. 
+아래 원본 데이터(달러, 원유, 2/10/30년 국채, FOMC, 지정학 뉴스)와 팀장들의 보고서를 최종 검토하고 결단을 내려라.
 
 [원본 팩트 데이터]
 {raw_data}
@@ -239,9 +259,10 @@ def generate_and_send_briefing(current_price, raw_data, ai_report):
 
 [출력 양식]
 👑 [50년 경력 대표 AI 최종 결단]
-1. 🎯 단타(스캘핑) 최종 타점 지시: (두 팀장의 의견을 조율하여 최종 진입가, 손절가, 방향을 가장 안전하게 확정하여 지시하라)
-2. 🌊 스윙 & 추세변곡 판단: (다중시간대 지표와 VSA를 볼 때, 지금 슬슬 단기 스윙이나 추세 변곡 타점이 도래했는지 명확히 선언하라)
-3. 💡 대표의 일침: (현재 시장을 대하는 트레이더를 위한 뼈때리는 조언 한 줄)"""
+1. 🎯 단타(스캘핑) 최종 타점 지시: (두 팀장의 의견 조율하여 진입가, 손절가, 방향 확정)
+2. 🌊 스윙 & 추세변곡 판단: (다중시간대 및 VSA를 볼 때 스윙 변곡 타점인지 선언)
+3. 🦅 FOMC & 매크로/지정학 전망: (달러, 원유, 2년/10년/30년 국채 금리 변동 및 지정학적 리스크, 차주 FOMC가 차트에 미칠 압력을 종합 분석하라)
+4. 💡 대표의 일침: (뼈때리는 조언 한 줄)"""
 
     ceo_ord = ask_expert("대표AI", ceo_prompt, delay=0.5)[1]
 
@@ -256,13 +277,12 @@ def generate_and_send_briefing(current_price, raw_data, ai_report):
             "price": current_price, 
             "scap_result": s_ord, 
             "trend_result": t_ord,
-            "ceo_result": ceo_ord # 대표의 판단도 일지에 기록
+            "ceo_result": ceo_ord 
         })
         with open(JOURNAL_FILE, "w", encoding="utf-8") as f: 
             json.dump(j_data[-100:], f, ensure_ascii=False, indent=4)
     except: pass
 
-    # 텔레그램 메시지 발송
     msg1 = f"⏰ [1/3] 거시/스캘핑 보고서\n\n[거시경제]\n{foundations.get('거시', '')}\n\n[스캘퍼]\n{techs.get('스캘퍼', '')}"
     msg2 = f"⏰ [2/3] 단타/스윙 보고서\n\n[단타]\n{techs.get('단타', '')}\n\n[스윙]\n{techs.get('스윙', '')}\n\n[추세]\n{techs.get('추세', '')}"
     send_telegram_message(msg1); time.sleep(1); send_telegram_message(msg2)
@@ -271,7 +291,6 @@ def generate_and_send_briefing(current_price, raw_data, ai_report):
     tele2 = f"📋 [팀장 브리핑: 스윙]\n현재가: {current_price}\n\n{t_ord}"
     time.sleep(1); send_telegram_message(tele1); time.sleep(1); send_telegram_message(tele2)
 
-    # 👑 대표 AI 텔레그램 최종 메시지
     tele_ceo = f"👑 [대표 AI 최종 결단] 👑\n현재가: {current_price}\n\n{ceo_ord}"
     time.sleep(1); send_telegram_message(tele_ceo)
 
@@ -287,25 +306,24 @@ if __name__ == "__main__":
 
     if is_running_in_streamlit():
         st.set_page_config(page_title="AI 실전 퀀트 봇", layout="wide", page_icon="🤖")
-        st.title("🤖 AI 퀀트 회사 대시보드 (CEO 결단 시스템)")
-        st.markdown("수석 팀장들의 분석을 바탕으로, **50년 경력의 대표 AI가 최종 타점과 변곡점 도래 여부를 판가름**합니다.")
+        st.title("🤖 AI 퀀트 회사 대시보드 (매크로/지정학 순차 수집 버전)")
+        st.markdown("FOMC, 국채(2/10/30년), 달러, 원유, 지정학 리스크를 **중요도 순서대로 3단계 순차 수집**하여 분석합니다.")
         
         if st.button("🚀 실시간 분석 즉시 실행", type="primary", use_container_width=True):
             if not client: 
                 st.error("API 키 오류가 발생했습니다.")
                 st.stop()
                 
-            with st.status("시장 분석 및 팀장 회의, 대표 AI 최종 검토 중...", expanded=True):
+            with st.status("중요도별 순차 팩트 수집 및 대표 AI 검토 중...", expanded=True):
                 try:
                     c_price, r_data, a_rep = get_market_data()
                     st.warning(f"**[과거 매매 오답노트]**\n{a_rep}")
                     
                     s, t, ceo = generate_and_send_briefing(c_price, r_data, a_rep)
-                    st.success("✅ 대표 AI 최종 결단 텔레그램 전송 완료!")
+                    st.success("✅ 대표 AI 최종 결단 전송 완료!")
                     
                     st.divider()
                     
-                    # 👑 대표 AI 화면 가장 위에 크게 강조
                     st.markdown("### 👑 50년 경력 대표 AI의 최종 결단")
                     st.info(ceo)
                     
