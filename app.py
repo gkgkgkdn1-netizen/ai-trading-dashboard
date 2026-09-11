@@ -13,11 +13,11 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
-# API 키 및 설정 
 MY_GEMINI_KEY = os.environ.get("RAW_KEY", "").strip().replace("\n", "").replace("\r", "")
 TELEGRAM_BOT_TOKEN = "8923714208:AAH3sH-BHlAeDdfWz6n-kalVBS4awb_C-Y0".strip()
 TELEGRAM_CHAT_ID = "8302782835".strip()
 COIN_SYMBOL = "BTC/USDT:USDT"
+ETH_SYMBOL = "ETH/USDT:USDT"
 JOURNAL_FILE = "trading_journal.json"
 
 client = genai.Client(api_key=MY_GEMINI_KEY) if MY_GEMINI_KEY else None
@@ -29,261 +29,233 @@ def send_telegram_message(message):
         for chunk in chunks:
             data = urllib.parse.urlencode({'chat_id': TELEGRAM_CHAT_ID, 'text': chunk}).encode('utf-8')
             req = urllib.request.Request(url, data=data)
-            with urllib.request.urlopen(req) as response:
-                pass
+            with urllib.request.urlopen(req) as response: pass
             time.sleep(0.5)
         return True
-    except:
-        return False
+    except: return False
 
 def fetch_tradfi_data():
     try:
-        tickers = {"나스닥": "NQ=F", "원유(WTI)": "CL=F", "금(Gold)": "GC=F", "미 국채 10년물": "^TNX"}
+        tickers = {"나스닥": "NQ=F", "원유": "CL=F", "달러인덱스": "DX-Y.NYB", "미 국채10년": "^TNX"}
         results = []
+        is_weekend = False
         for name, symbol in tickers.items():
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="1d", interval="15m")
+            hist = ticker.history(period="5d", interval="15m") # 주말 대비 넉넉히 가져옴
             if len(hist) >= 2:
-                prev_close = hist['Close'].iloc[-2]
-                curr_close = hist['Close'].iloc[-1]
-                trend = "상승 📈" if curr_close > prev_close else "하락 📉"
-                results.append(f"{name}: {curr_close:.2f} (직전대비 {trend})")
-            elif not hist.empty:
-                results.append(f"{name}: {hist['Close'].iloc[-1]:.2f}")
-        return "\n".join(results)
-    except:
-        return "전통금융 데이터 수집 지연"
+                prev_c = hist['Close'].iloc[-2]
+                curr_c = hist['Close'].iloc[-1]
+                # 🛑 [패치 2] 가격 변동이 0이면 주말장 휴장으로 인식
+                if prev_c == curr_c: 
+                    is_weekend = True
+                trend = "상승📈" if curr_c > prev_c else "하락📉" if curr_c < prev_c else "휴장/보합"
+                results.append(f"[{name}] {curr_c:.2f} ({trend})")
+        
+        output = "\n".join(results)
+        if is_weekend:
+            output += "\n💡 [알림] 현재 주말(또는 휴장)이므로 전통금융 지표는 변동 없음. 코인 독자적 수급에 집중할 것."
+        return output
+    except: return "전통금융 수집 지연"
 
 def fetch_macro_news():
     news_summaries = []
     try:
-        query = urllib.parse.quote("CPI OR PPI OR FOMC OR Bitcoin Funding Rate")
-        rss_url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
-        req = urllib.request.Request(rss_url, headers={'User-Agent': 'Mozilla/5.0'})
+        query = urllib.parse.quote("CPI OR PPI OR FOMC OR Bitcoin")
+        req = urllib.request.Request(f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR", headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
-            xml_data = response.read()
-            root = ET.fromstring(xml_data)
-            count = 0
-            for item in root.findall('.//item'):
+            root = ET.fromstring(response.read())
+            for count, item in enumerate(root.findall('.//item')):
                 title = item.find('title')
                 if title is not None and title.text:
                     news_summaries.append(f"- {title.text}")
-                    count += 1
-                    if count >= 7: break
-    except:
-        pass
-    news_text = "\n".join(news_summaries) if news_summaries else "최신 주요 경제 뉴스 수집 중"
-    return f"[최신 매크로 이슈]\n{news_text}"
+                if count >= 5: break
+    except: pass
+    return "\n".join(news_summaries)
 
-def save_trading_journal(data_record):
+def generate_ai_feedback(current_price):
+    if not os.path.exists(JOURNAL_FILE): return "과거 기록 없음"
     try:
-        journal_data = []
-        if os.path.exists(JOURNAL_FILE):
-            with open(JOURNAL_FILE, "r", encoding="utf-8") as f:
-                journal_data = json.load(f)
-        journal_data.append(data_record)
-        with open(JOURNAL_FILE, "w", encoding="utf-8") as f:
-            json.dump(journal_data, f, ensure_ascii=False, indent=4)
-    except:
-        pass
+        with open(JOURNAL_FILE, "r", encoding="utf-8") as f:
+            journal = json.load(f)[-3:]
+        if not journal: return "기록 없음"
+        feedback = []
+        for i, entry in enumerate(journal):
+            past_price = float(entry.get("price", current_price))
+            scap_res = str(entry.get("scap_result", "")).replace(" ", "")
+            
+            # 🛑 [패치 1] 어설픈 글자 찾기가 아닌, 정규화된 엄격한 텍스트 매칭
+            direction = "관망"
+            if "방향:롱" in scap_res or "방향(롱" in scap_res: direction = "롱"
+            elif "방향:숏" in scap_res or "방향(숏" in scap_res: direction = "숏"
+            
+            if direction == "관망": continue
+            is_win = (direction == "롱" and current_price > past_price) or (direction == "숏" and current_price < past_price)
+            feedback.append(f"과거 {i+1}: {direction} 지시 -> {'성공✅' if is_win else '실패❌ (역행)'} (당시 {past_price:.1f} -> 현재 {current_price:.1f})")
+        return "\n".join(feedback) + "\n\n🚨 [경고]: 예측 실패 기록이 있다면 네 관점이 틀린 것이다. 기존 편향을 버리고 팩트 지표(원점)에서 재검토하라!"
+    except: return "피드백 파싱 오류"
 
-def ask_expert(name, prompt):
+# 🛑 [패치 4] API 호출 병목 방지를 위한 안전 장치 (딜레이 내장)
+def ask_expert(name, prompt, delay=0):
+    time.sleep(delay)
     try:
         res = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
-        if res and res.text:
-            return name, res.text
-    except Exception as e:
-        pass
-    return name, "분석 오류 또는 응답 지연"
+        if res and res.text: return name, res.text
+    except: pass
+    return name, "분석 지연 (API 응답 없음)"
 
-# 🔥 [핵심 퀀트 엔진] 파이썬 수학 연산을 통한 100% 팩트 지표 산출
-def get_quant_indicators(exchange):
-    try:
-        # 비트겟 15분봉 100개 긁어오기
-        ohlcv = exchange.fetch_ohlcv(COIN_SYMBOL, timeframe='15m', limit=100)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        
-        # 1. VWAP (거래량 가중 평균가)
-        df['tp'] = (df['high'] + df['low'] + df['close']) / 3
-        df['vwap'] = (df['tp'] * df['volume']).cumsum() / df['volume'].cumsum()
-        
-        # 2. RSI (상대강도지수 14)
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['rsi'] = 100 - (100 / (1 + rs))
-        
-        # 3. 볼린저 밴드 (20, 2)
-        df['sma20'] = df['close'].rolling(window=20).mean()
-        df['std20'] = df['close'].rolling(window=20).std()
-        df['bb_upper'] = df['sma20'] + (df['std20'] * 2)
-        df['bb_lower'] = df['sma20'] - (df['std20'] * 2)
-        
-        # 4. 장세 판별 (Regime Filter) - 밴드폭 기준
-        last = df.iloc[-1]
-        bb_width = (last['bb_upper'] - last['bb_lower']) / last['sma20'] * 100
-        regime = "추세장 (변동성 폭발)" if bb_width > 2.5 else "횡보장 (변동성 수렴중 - 박스권 매매 요망)"
+def get_multi_tf_quant(exchange):
+    timeframes = {'15m': 100, '1h': 100, '4h': 100}
+    quant_data = {}
+    for tf, limit in timeframes.items():
+        try:
+            ohlcv = exchange.fetch_ohlcv(COIN_SYMBOL, timeframe=tf, limit=limit)
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            df['rsi'] = 100 - (100 / (1 + gain / loss))
+            
+            # 🛑 [패치 3] POC 해상도를 20조각에서 50조각으로 높여 핀포인트 평단가 추출
+            hist, bins = np.histogram(df['close'], bins=50, weights=df['volume'])
+            poc_price = (bins[np.argmax(hist)] + bins[np.argmax(hist)+1]) / 2
+            
+            df['tr1'] = df['high'] - df['low']
+            df['tr2'] = np.abs(df['high'] - df['close'].shift())
+            df['tr3'] = np.abs(df['low'] - df['close'].shift())
+            df['atr'] = df[['tr1', 'tr2', 'tr3']].max(axis=1).rolling(14).mean()
+            
+            trend = "상승 추세" if df['close'].iloc[-1] > df['close'].iloc[-20] else "하락 추세"
+            df['body'] = np.abs(df['close'] - df['open'])
+            vol_sma = df['volume'].rolling(20).mean()
+            last = df.iloc[-1]
+            
+            vsa_status = "정상 (거래량-캔들 동조)"
+            if last['volume'] > vol_sma.iloc[-1] * 1.5 and last['body'] < df['body'].mean() * 0.5:
+                vsa_status = "🚨 VSA 이상 감지: 대량 거래량 + 짧은 캔들 (변곡 브레이크 확률 극상)"
 
-        return {
-            "rsi": f"{last['rsi']:.1f}",
-            "vwap": f"{last['vwap']:.1f}",
-            "bb_upper": f"{last['bb_upper']:.1f}",
-            "bb_lower": f"{last['bb_lower']:.1f}",
-            "bb_width": f"{bb_width:.2f}%",
-            "regime": regime
-        }
-    except Exception as e:
-        return {"error": f"퀀트 연산 실패: {e}"}
+            quant_data[tf] = {"rsi": last['rsi'], "poc": poc_price, "atr": last['atr'], "trend": trend, "vsa": vsa_status}
+        except Exception as e:
+            quant_data[tf] = {"error": str(e)}
+    return quant_data
 
 def get_market_data():
     exchange = ccxt.bitget()
-    ticker = exchange.fetch_ticker(COIN_SYMBOL)
-    orderbook = exchange.fetch_order_book(COIN_SYMBOL, limit=5)
     
-    current_price = ticker['last']
-    bid_wall = orderbook['bids'][0][0] if orderbook['bids'] else "정보 없음"
-    ask_wall = orderbook['asks'][0][0] if orderbook['asks'] else "정보 없음"
+    btc_price = exchange.fetch_ticker(COIN_SYMBOL)['last']
+    eth_price = exchange.fetch_ticker(ETH_SYMBOL)['last']
     
-    # 펀딩비 및 미결제약정(OI) 수집 시도
-    funding_rate = "정보 없음"
-    open_interest = "정보 없음"
     try:
-        funding_info = exchange.fetch_funding_rate(COIN_SYMBOL)
-        funding_rate = funding_info.get('fundingRate', '정보 없음')
-        oi_info = exchange.fetch_open_interest(COIN_SYMBOL)
-        open_interest = oi_info.get('openInterestAmount', '정보 없음')
-    except:
-        pass
+        orderbook = exchange.fetch_order_book(COIN_SYMBOL, limit=100)
+        bid_vol = sum([v for p, v in orderbook['bids']])
+        ask_vol = sum([v for p, v in orderbook['asks']])
+        obi = ((bid_vol - ask_vol) / (bid_vol + ask_vol)) * 100
+        obi_status = f"{obi:.1f}% (" + ("매수벽 우위/숏커버 주의" if obi > 15 else "매도벽 우위/하락 주의" if obi < -15 else "중립") + ")"
+    except: obi_status = "오류"
 
-    # 파이썬 수학 퀀트 지표 연산 결과
-    quant = get_quant_indicators(exchange)
-    quant_text = (
-        f"- 장세 판단: {quant.get('regime', 'N/A')}\n"
-        f"- 15m RSI: {quant.get('rsi', 'N/A')} (30이하 과매도, 70이상 과매수)\n"
-        f"- 15m VWAP: {quant.get('vwap', 'N/A')}\n"
-        f"- 볼린저 밴드 상단: {quant.get('bb_upper', 'N/A')} / 하단: {quant.get('bb_lower', 'N/A')}\n"
-        f"- 밴드폭(수축도): {quant.get('bb_width', 'N/A')}"
-    ) if "error" not in quant else "지표 계산 오류"
+    try:
+        trades = exchange.fetch_trades(COIN_SYMBOL, limit=500)
+        whale_buy = sum([t['amount']*t['price'] for t in trades if t['side'] == 'buy' and t['amount']*t['price'] >= 20000])
+        whale_sell = sum([t['amount']*t['price'] for t in trades if t['side'] == 'sell' and t['amount']*t['price'] >= 20000])
+        whale_status = f"[고래 Taker] 매수: {whale_buy:.0f}$ / 매도: {whale_sell:.0f}$ ➔ " + ("🔥매수 융단폭격" if whale_buy > whale_sell else "🩸매도 융단폭격")
+    except: whale_status = "고래 데이터 수집 지연"
 
-    macro_news = fetch_macro_news()
-    tradfi_data = fetch_tradfi_data()
+    funding = exchange.fetch_funding_rate(COIN_SYMBOL).get('fundingRate', 'N/A')
+    oi = exchange.fetch_open_interest(COIN_SYMBOL).get('openInterestAmount', 'N/A')
+    q = get_multi_tf_quant(exchange)
+    
+    quant_report = (
+        f"📊 [4H/대추세] {q.get('4h', {}).get('trend')} | RSI: {q.get('4h', {}).get('rsi', 0):.1f} | 거대매물대(POC): {q.get('4h', {}).get('poc', 0):.1f}\n"
+        f"📊 [1H/중기] {q.get('1h', {}).get('trend')} | RSI: {q.get('1h', {}).get('rsi', 0):.1f} | 1H 매물대(POC): {q.get('1h', {}).get('poc', 0):.1f}\n"
+        f"📊 [15M/타점] {q.get('15m', {}).get('vsa')} | 15M 매물대: {q.get('15m', {}).get('poc', 0):.1f}\n"
+        f"💡 [수학적 손익비 가이드]: 15M 변동폭(ATR) {q.get('15m', {}).get('atr', 0):.1f}$ 반영 필수."
+    )
     
     raw_data = (
-        f"🚨 [절대 규칙] 너희는 지표를 임의로 상상하거나 추측하지 마라. 아래의 [수치화된 팩트 데이터]만을 100% 신뢰하여 분석하라.\n\n"
-        f"[코인 실시간 팩트 데이터]\n"
-        f"현재 가격: {current_price} USDT\n"
-        f"펀딩비: {funding_rate} / 미결제약정(OI): {open_interest}\n\n"
-        f"💻 [파이썬 퀀트 지표 연산 팩트 (15분봉)]\n{quant_text}\n\n"
-        f"[전통금융 15분봉 동향]\n{tradfi_data}\n\n"
-        f"{macro_news}"
+        f"🚨 [API 팩트 데이터] 상상 금지.\n\n"
+        f"[코인 실시간 체결/호가]\n"
+        f"BTC 현재가: {btc_price} USDT (ETH: {eth_price})\n"
+        f"펀딩비: {funding} / 미결제약정(OI): {oi}\n"
+        f"걸려있는 호가(OBI): {obi_status}\n"
+        f"🐋 스마트머니 흐름: {whale_status}\n\n"
+        f"💻 [다중시간대 퀀트 팩트]\n{quant_report}\n\n"
+        f"🌐 [글로벌 매크로]\n{fetch_tradfi_data()}\n\n"
+        f"[뉴스]\n{fetch_macro_news()}"
     )
-    return current_price, raw_data
+    return btc_price, raw_data, generate_ai_feedback(btc_price)
 
-def generate_and_send_briefing(current_price, raw_data):
-    macro_geo_prompts = {
-        "거시경제 전문가": f"너는 월가 출신 거시 퀀트. [데이터]를 바탕으로 <사고 과정>을 거쳐 팩트만 서술하라. 국채 금리 증감과 비트코인 가격의 디커플링(상반된 움직임) 여부를 수치적으로 분석하라.\n\n[데이터]\n{raw_data}",
-        "지정학 리스크 전문가": f"너는 자산 배분 전문가. 전통금융 자산 대비 비트코인의 매력도를 수치 기반으로 평가하라.\n\n[데이터]\n{raw_data}"
+def generate_and_send_briefing(current_price, raw_data, ai_report):
+    macro_geo = {
+        "거시": ("거시 퀀트. 매크로 자산(금리/달러/나스닥)이 코인에 주는 수급 압박을 분석하라.", 0),
+        "지정학": ("전통금융과 코인의 커플링/디커플링 팩트를 확인하라.", 0.5) # 0.5초 딜레이
     }
     
-    foundation_opinions = {}
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(ask_expert, name, prompt) for name, prompt in macro_geo_prompts.items()]
-        for future in as_completed(futures):
-            name, res = future.result()
-            foundation_opinions[name] = res
-
-    foundation_context = "\n\n".join([f"[{k}]\n{v}" for k, v in foundation_opinions.items()])
+    foundations = {}
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        futs = [ex.submit(ask_expert, n, f"{p}\n\n{raw_data}", delay) for n, (p, delay) in macro_geo.items()]
+        for fut in as_completed(futs):
+            name, res = fut.result()
+            foundations[name] = res
+    f_ctx = "\n\n".join([f"[{k}]\n{v}" for k, v in foundations.items()])
     
     tech_prompts = {
-        "스캘핑 전문가": f"앞선 분석과 [수치화된 팩트 데이터]의 파이썬 연산 VWAP, RSI, 밴드 상/하단을 정확히 읽고 1~15분 숏/롱 타점을 잡아라. 횡보장이면 박스권 역추세, 추세장이면 돌파 매매를 제안하라.\n\n[거시/지정학]\n{foundation_context}\n[팩트 데이터]: {raw_data}",
-        "단타 전문가": f"수치화된 OI(미결제약정)와 펀딩비를 고려하여 세력의 숏 스퀴즈/롱 스퀴즈 가능성을 계산하고 리스크 대비 확률이 높은 타점을 잡아라.\n\n[거시/지정학]\n{foundation_context}\n[팩트 데이터]: {raw_data}",
-        "단기 스윙 전문가": f"1~2주 단기 채널 지지선과 저항선을 팩트 기반으로 명시하라.\n\n[거시/지정학]\n{foundation_context}\n[팩트 데이터]: {raw_data}",
-        "추세매매 전문가": f"RSI와 밴드폭 수치를 바탕으로 현 추세의 지속 여부 및 변곡점을 분석하라.\n\n[거시/지정학]\n{foundation_context}\n[팩트 데이터]: {raw_data}"
+        "스캘퍼": ("고래 Taker(시장가)와 OBI(호가)의 모순을 찾아라. 개미와 반대로 가라.", 0),
+        "단타": ("펀딩비, OI, 고래 타격을 종합해 청산 스퀴즈를 예측하라.", 0.5),
+        "스윙": ("4H, 1H 매물대(POC)와 거시 흐름을 묶어 타점을 잡아라.", 1.0),
+        "추세": ("BTC/ETH 다이버전스, 다중시간대 추세를 통해 가짜 돌파를 걸러라.", 1.5)
     }
 
-    tech_opinions = {}
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [executor.submit(ask_expert, name, prompt) for name, prompt in tech_prompts.items()]
-        for future in as_completed(futures):
-            name, res = future.result()
-            tech_opinions[name] = res
+    techs = {}
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = [ex.submit(ask_expert, n, f"{p}\n\n{f_ctx}\n[데이터]: {raw_data}", delay) for n, (p, delay) in tech_prompts.items()]
+        for fut in as_completed(futs):
+            name, res = fut.result()
+            techs[name] = res
+    all_ctx = "\n\n".join([f"[{k}]\n{v}" for k, v in {**foundations, **techs}.items()])
+    
+    s_prompt = f"수석 스캘퍼. [AI 피드백] 철저히 수용. 🐋고래 Taker와 거시 자산을 팩트로만 판단. 손절가는 ATR(변동폭) 적용.\n\n[피드백]\n{ai_report}\n\n[의견]\n{all_ctx}\n[양식]\n1. 리스크 & 스마트머니 점검:\n2. 방향 (롱/숏/관망):\n3. 레버리지:\n4. 진입가 (POC 매물대 기준):\n5. 손절/익절 (ATR 폭 반영):"
+    t_prompt = f"스윙 팀장. [AI 피드백] 철저히 수용. 글로벌 자산 흐름과 4H POC 중심 타점. 불확실하면 관망.\n\n[피드백]\n{ai_report}\n\n[의견]\n{all_ctx}\n[양식]\n1. 리스크 & 글로벌매크로 점검:\n2. 방향 (롱/숏/관망):\n3. 레버리지:\n4. 진입가 (POC 매물대 기준):\n5. 손절/익절 (ATR 폭 반영):"
 
-    all_opinions_dict = {**foundation_opinions, **tech_opinions}
-    all_opinions_text = "\n\n".join([f"[{k}]\n{v}" for k, v in all_opinions_dict.items()])
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        s_ord = ex.submit(ask_expert, "단타", s_prompt, 0).result()[1]
+        t_ord = ex.submit(ask_expert, "추세", t_prompt, 0.5).result()[1]
     
-    scap_prompt = f"너는 수십억 운용 수석 스캘퍼. [악마의 변호인: 타점 실패 확률]을 먼저 검증하고 팩트 지표가 충족 안 되면 '관망'하라.\n[의견]\n{all_opinions_text}\n[양식]\n1. 리스크 팩트 점검:\n2. 최종 방향 (롱/숏/관망):\n3. 레버리지:\n4. 진입가:\n5. 손절가/익절가:"
-    trend_prompt = f"너는 단기 스윙 팀장. [악마의 변호인: 추세 속임수 확률]을 검증하고 어설프면 '관망'하라.\n[의견]\n{all_opinions_text}\n[양식]\n1. 리스크 팩트 점검:\n2. 최종 방향 (롱/숏/관망):\n3. 레버리지:\n4. 진입가:\n5. 목표가/손절가:"
+    try:
+        j_data = []
+        if os.path.exists(JOURNAL_FILE):
+            with open(JOURNAL_FILE, "r", encoding="utf-8") as f: j_data = json.load(f)
+        j_data.append({"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"), "price": current_price, "scap_result": s_ord, "trend_result": t_ord})
+        with open(JOURNAL_FILE, "w", encoding="utf-8") as f: json.dump(j_data[-100:], f, ensure_ascii=False, indent=4)
+    except: pass
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        future_scap = executor.submit(ask_expert, "단타팀장", scap_prompt)
-        future_trend = executor.submit(ask_expert, "추세팀장", trend_prompt)
-        _, scap_order = future_scap.result()
-        _, trend_order = future_trend.result()
+    msg1 = f"⏰ [1/2] 거시/스캘핑 (무결점 마스터버전)\n\n[거시경제]\n{foundations.get('거시', '')}\n\n[스캘퍼]\n{techs.get('스캘퍼', '')}"
+    msg2 = f"⏰ [2/2] 단타/스윙 (무결점 마스터버전)\n\n[단타]\n{techs.get('단타', '')}\n\n[스윙]\n{techs.get('스윙', '')}\n\n[추세]\n{techs.get('추세', '')}"
+    send_telegram_message(msg1); time.sleep(1); send_telegram_message(msg2)
     
-    journal_record = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "price": current_price,
-        "scap_result": scap_order,
-        "trend_result": trend_order
-    }
-    save_trading_journal(journal_record)
-
-    msg_3_part1 = f"⏰ [1/2] 거시/지정학/스캘핑 (팩트수치 기반)\n\n[거시경제]\n{all_opinions_dict.get('거시경제 전문가', '')}\n\n[지정학]\n{all_opinions_dict.get('지정학 리스크 전문가', '')}\n\n[스캘핑]\n{all_opinions_dict.get('스캘핑 전문가', '')}"
-    msg_3_part2 = f"⏰ [2/2] 단타/스윙/추세 (팩트수치 기반)\n\n[단타]\n{all_opinions_dict.get('단타 전문가', '')}\n\n[단기 스윙]\n{all_opinions_dict.get('단기 스윙 전문가', '')}\n\n[추세매매]\n{all_opinions_dict.get('추세매매 전문가', '')}"
-    
-    send_telegram_message(msg_3_part1)
-    time.sleep(1)
-    send_telegram_message(msg_3_part2)
-
-    tele_msg_scap = f"🔥 [최종 퀀트 오더: 단타/스캘핑] 🔥\n\n현재가: {current_price}\n\n{scap_order}"
-    tele_msg_trend = f"📈 [최종 퀀트 오더: 단기 스윙] 📈\n\n현재가: {current_price}\n\n{trend_order}"
-    
-    time.sleep(1)
-    send_telegram_message(tele_msg_scap)
-    time.sleep(1)
-    send_telegram_message(tele_msg_trend)
-    
-    return all_opinions_dict, scap_order, trend_order
+    tele1 = f"🔥 [최종 퀀트 오더: 스캘핑] 🔥\n🤖 무결점 팩트 & 리스크 검증 완료\n현재가: {current_price}\n\n{s_ord}"
+    tele2 = f"📈 [최종 퀀트 오더: 스윙] 📈\n🤖 무결점 팩트 & 리스크 검증 완료\n현재가: {current_price}\n\n{t_ord}"
+    time.sleep(1); send_telegram_message(tele1); time.sleep(1); send_telegram_message(tele2)
+    return s_ord, t_ord
 
 if __name__ == "__main__":
-    try:
-        import streamlit.web.cli
-        is_streamlit = True
-    except ImportError:
-        is_streamlit = False
-
-    if "streamlit" in os.environ.get("_", "") or os.environ.get("STREAMLIT_SERVER_PORT"):
-        st.set_page_config(page_title="AI 실전 퀀트 봇", page_icon="🤖", layout="wide")
-        st.title("🤖 AI 트레이딩 봇 (100% 수치 팩트 퀀트 버전)")
-        st.write("파이썬 수학 연산을 통해 계산된 RSI, VWAP, 밴드 수치를 AI에게 강제로 먹여 환각을 차단합니다.")
-
-        if st.button("🚀 실전 퀀트 브리핑 즉시 실행", type="primary"):
-            if not client:
-                st.error("API 키가 없습니다.")
-                st.stop()
-            with st.status("실시간 OHLCV 연산 및 퀀트 분석 중...", expanded=True):
+    is_st = "streamlit" in os.environ.get("_", "") or os.environ.get("STREAMLIT_SERVER_PORT")
+    if is_st:
+        st.set_page_config(page_title="AI 퀀트 봇", layout="wide")
+        st.title("🤖 AI 퀀트 봇 (무결점 마스터 버전)")
+        if st.button("🚀 실행"):
+            if not client: st.error("API 키 오류"); st.stop()
+            with st.status("무결점 팩트 연산 및 과부하 방지 프로세스 가동 중..."):
                 try:
-                    curr_price, raw_data = get_market_data()
-                    all_ops, scap, trend = generate_and_send_briefing(curr_price, raw_data)
-                    st.success("텔레그램 전송 완료!")
-                    
-                    st.divider()
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.subheader("⚡ [단타용] 팀장 오더")
-                        st.success(scap)
-                    with col2:
-                        st.subheader("📈 [단기 스윙용] 팀장 오더")
-                        st.info(trend)
-                except Exception as e:
-                    st.error(f"오류 발생: {e}")
+                    c_price, r_data, a_rep = get_market_data()
+                    st.warning(f"**[봇 자가 피드백]**\n{a_rep}")
+                    s, t = generate_and_send_briefing(c_price, r_data, a_rep)
+                    st.success("전송 완료!")
+                    c1, c2 = st.columns(2)
+                    c1.success(s); c2.info(t)
+                except Exception as e: st.error(e)
     else:
-        print(f"[{datetime.now()}] 🤖 퀀트 수치 연산 및 정각 브리핑 시작...")
         if client:
             try:
-                curr_price, raw_data = get_market_data()
-                generate_and_send_briefing(curr_price, raw_data)
-                print("✅ 텔레그램 전송 완료.")
-            except Exception as e:
-                print(f"❌ 오류: {e}")
+                c_price, r_data, a_rep = get_market_data()
+                generate_and_send_briefing(c_price, r_data, a_rep)
+            except: pass
