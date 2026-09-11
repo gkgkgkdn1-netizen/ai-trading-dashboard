@@ -1,3 +1,7 @@
 streamlit
 ccxt
 google-genai
+streamlit
+ccxt
+google-genai
+yfinance
