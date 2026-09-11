@@ -102,7 +102,7 @@ def ask_expert(name, prompt, delay=0):
         res = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
         if res and res.text: return name, res.text
     except: pass
-    return name, "분석 지연"
+    return name, "분석 지연 (API 응답 없음)"
 
 def get_multi_tf_quant(exchange):
     timeframes = {'15m': 100, '1h': 100, '4h': 100}
@@ -189,7 +189,7 @@ def get_market_data():
 
 def generate_and_send_briefing(current_price, raw_data, ai_report):
     macro_geo = {
-        "거시": ("거시 퀀트. 매크로 자산(금리/달러/나스닥)이 코인에 주는 수급 압박 분석.", 0),
+        "거시": ("거시 퀀트. 매크로 자산이 코인에 주는 수급 압박 분석.", 0),
         "지정학": ("전통금융과 코인의 커플링/디커플링 팩트 확인.", 0.5) 
     }
     
@@ -223,6 +223,28 @@ def generate_and_send_briefing(current_price, raw_data, ai_report):
         s_ord = ex.submit(ask_expert, "단타", s_prompt, 0).result()[1]
         t_ord = ex.submit(ask_expert, "추세", t_prompt, 0.5).result()[1]
     
+    # 👑 [핵심 추가] 50년 경력의 전설적인 대표 AI 최종 검토 로직
+    ceo_prompt = f"""너는 월스트리트에서 50년간 살아남은 전설적인 퀀트 트레이딩 회사 대표(CEO)다. 
+아래 원본 팩트 데이터와 두 팀장(스캘핑, 스윙)의 보고서를 최종 검토하고 결단을 내려라. 
+팀장들의 의견이 충돌하거나 허점이 보이면 가차없이 수정 지시를 내려라.
+
+[원본 팩트 데이터]
+{raw_data}
+
+[스캘핑 팀장 보고서]
+{s_ord}
+
+[스윙 팀장 보고서]
+{t_ord}
+
+[출력 양식]
+👑 [50년 경력 대표 AI 최종 결단]
+1. 🎯 단타(스캘핑) 최종 타점 지시: (두 팀장의 의견을 조율하여 최종 진입가, 손절가, 방향을 가장 안전하게 확정하여 지시하라)
+2. 🌊 스윙 & 추세변곡 판단: (다중시간대 지표와 VSA를 볼 때, 지금 슬슬 단기 스윙이나 추세 변곡 타점이 도래했는지 명확히 선언하라)
+3. 💡 대표의 일침: (현재 시장을 대하는 트레이더를 위한 뼈때리는 조언 한 줄)"""
+
+    ceo_ord = ask_expert("대표AI", ceo_prompt, delay=0.5)[1]
+
     try:
         j_data = []
         if os.path.exists(JOURNAL_FILE):
@@ -233,27 +255,29 @@ def generate_and_send_briefing(current_price, raw_data, ai_report):
             "timestamp": get_kst_time().strftime("%Y-%m-%d %H:%M:%S"), 
             "price": current_price, 
             "scap_result": s_ord, 
-            "trend_result": t_ord
+            "trend_result": t_ord,
+            "ceo_result": ceo_ord # 대표의 판단도 일지에 기록
         })
         with open(JOURNAL_FILE, "w", encoding="utf-8") as f: 
             json.dump(j_data[-100:], f, ensure_ascii=False, indent=4)
     except: pass
 
-    msg1 = f"⏰ [1/2] 거시/스캘핑 (무결점 방어버전)\n\n[거시경제]\n{foundations.get('거시', '')}\n\n[스캘퍼]\n{techs.get('스캘퍼', '')}"
-    msg2 = f"⏰ [2/2] 단타/스윙 (무결점 방어버전)\n\n[단타]\n{techs.get('단타', '')}\n\n[스윙]\n{techs.get('스윙', '')}\n\n[추세]\n{techs.get('추세', '')}"
+    # 텔레그램 메시지 발송
+    msg1 = f"⏰ [1/3] 거시/스캘핑 보고서\n\n[거시경제]\n{foundations.get('거시', '')}\n\n[스캘퍼]\n{techs.get('스캘퍼', '')}"
+    msg2 = f"⏰ [2/3] 단타/스윙 보고서\n\n[단타]\n{techs.get('단타', '')}\n\n[스윙]\n{techs.get('스윙', '')}\n\n[추세]\n{techs.get('추세', '')}"
     send_telegram_message(msg1); time.sleep(1); send_telegram_message(msg2)
     
-    tele1 = f"🔥 [최종 퀀트 오더: 스캘핑] 🔥\n🤖 수학적 무결점 & 리스크 방어 완료\n현재가: {current_price}\n\n{s_ord}"
-    tele2 = f"📈 [최종 퀀트 오더: 스윙] 📈\n🤖 수학적 무결점 & 리스크 방어 완료\n현재가: {current_price}\n\n{t_ord}"
+    tele1 = f"📋 [팀장 브리핑: 스캘핑]\n현재가: {current_price}\n\n{s_ord}"
+    tele2 = f"📋 [팀장 브리핑: 스윙]\n현재가: {current_price}\n\n{t_ord}"
     time.sleep(1); send_telegram_message(tele1); time.sleep(1); send_telegram_message(tele2)
-    return s_ord, t_ord
 
-# ==========================================
-# 🚀 100% 확실한 실행 모드 분기 (이 부분이 핵심 패치입니다)
-# ==========================================
+    # 👑 대표 AI 텔레그램 최종 메시지
+    tele_ceo = f"👑 [대표 AI 최종 결단] 👑\n현재가: {current_price}\n\n{ceo_ord}"
+    time.sleep(1); send_telegram_message(tele_ceo)
+
+    return s_ord, t_ord, ceo_ord
+
 if __name__ == "__main__":
-    
-    # 💡 웹사이트(Streamlit) 환경을 100% 확실하게 찾아내는 특수 함수
     def is_running_in_streamlit():
         try:
             from streamlit.runtime.scriptrunner import get_script_run_ctx
@@ -262,42 +286,45 @@ if __name__ == "__main__":
             return False
 
     if is_running_in_streamlit():
-        # 웹사이트 출력 전용 코드 (대표님이 원하시는 쾌적한 가독성 모드)
         st.set_page_config(page_title="AI 실전 퀀트 봇", layout="wide", page_icon="🤖")
-        st.title("🤖 AI 실전 퀀트 대시보드")
-        st.markdown("텔레그램 알림뿐만 아니라, **웹에서 가장 쾌적하게 팩트 지표와 오더를 확인**할 수 있습니다.")
+        st.title("🤖 AI 퀀트 회사 대시보드 (CEO 결단 시스템)")
+        st.markdown("수석 팀장들의 분석을 바탕으로, **50년 경력의 대표 AI가 최종 타점과 변곡점 도래 여부를 판가름**합니다.")
         
         if st.button("🚀 실시간 분석 즉시 실행", type="primary", use_container_width=True):
             if not client: 
                 st.error("API 키 오류가 발생했습니다.")
                 st.stop()
                 
-            with st.status("수학적 팩트 연산 및 5단계 에러 방어 가동 중...", expanded=True):
+            with st.status("시장 분석 및 팀장 회의, 대표 AI 최종 검토 중...", expanded=True):
                 try:
                     c_price, r_data, a_rep = get_market_data()
-                    st.warning(f"**[봇 자가 피드백 (오답노트)]**\n{a_rep}")
+                    st.warning(f"**[과거 매매 오답노트]**\n{a_rep}")
                     
-                    s, t = generate_and_send_briefing(c_price, r_data, a_rep)
-                    st.success("✅ 심층 분석 및 텔레그램 전송 완료!")
+                    s, t, ceo = generate_and_send_briefing(c_price, r_data, a_rep)
+                    st.success("✅ 대표 AI 최종 결단 텔레그램 전송 완료!")
                     
                     st.divider()
                     
-                    # 화면을 반으로 나누어 가독성 있게 출력
+                    # 👑 대표 AI 화면 가장 위에 크게 강조
+                    st.markdown("### 👑 50년 경력 대표 AI의 최종 결단")
+                    st.info(ceo)
+                    
+                    st.divider()
+                    
                     c1, c2 = st.columns(2)
                     with c1:
-                        st.subheader("⚡ [단타용] 스캘퍼 최종 오더")
+                        st.subheader("👨‍💼 [단타용] 스캘퍼 팀장 보고서")
                         st.success(s)
                     with c2:
-                        st.subheader("📈 [스윙용] 추세 최종 오더")
-                        st.info(t)
+                        st.subheader("👨‍💼 [스윙용] 추세 팀장 보고서")
+                        st.warning(t)
                         
-                    with st.expander("📊 AI가 참고한 실시간 수치 데이터 원본 보기"):
+                    with st.expander("📊 AI가 참고한 실시간 팩트 데이터 원본"):
                         st.code(r_data)
                         
                 except Exception as e: 
                     st.error(f"실행 중 오류 발생: {e}")
     else:
-        # 깃허브 자동화 전용 코드 (백그라운드에서 조용히 텔레그램만 전송)
         if client:
             try:
                 c_price, r_data, a_rep = get_market_data()
