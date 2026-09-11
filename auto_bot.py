@@ -22,7 +22,6 @@ JOURNAL_FILE = "trading_journal.json"
 
 client = genai.Client(api_key=MY_GEMINI_KEY) if MY_GEMINI_KEY else None
 
-# 🛡️ [패치 1] 무조건 한국 시간(KST)으로 고정하여 깃허브 서버 시간 오류 원천 차단
 def get_kst_time():
     return datetime.utcnow() + timedelta(hours=9)
 
@@ -55,7 +54,7 @@ def fetch_tradfi_data():
         
         output = "\n".join(results)
         if is_weekend:
-            output += "\n💡 [알림] 현재 주말(또는 휴장)로 전통금융 지표 정지 상태. 코인 수급에 집중할 것."
+            output += "\n💡 [알림] 현재 주말/휴장으로 전통금융 지표 정지 상태. 코인 수급에 집중할 것."
         return output
     except: return "전통금융 수집 지연"
 
@@ -77,7 +76,6 @@ def fetch_macro_news():
 def generate_ai_feedback(current_price):
     if not os.path.exists(JOURNAL_FILE): return "과거 기록 없음"
     try:
-        # 🛡️ [패치 3] 파일이 손상되었을 경우를 대비한 무적 복구 로직
         with open(JOURNAL_FILE, "r", encoding="utf-8") as f:
             content = f.read().strip()
             journal = json.loads(content)[-3:] if content else []
@@ -96,7 +94,7 @@ def generate_ai_feedback(current_price):
             is_win = (direction == "롱" and current_price > past_price) or (direction == "숏" and current_price < past_price)
             feedback.append(f"과거 {i+1}: {direction} 지시 -> {'성공✅' if is_win else '실패❌ (역행)'} (당시 {past_price:.1f} -> 현재 {current_price:.1f})")
         return "\n".join(feedback) + "\n\n🚨 [경고]: 예측 실패 기록 시 기존 편향을 팩트(원점)에서 철저히 재검토하라!"
-    except: return "과거 기록 초기화(복구) 중" # JSON 에러 시 다운 방지
+    except: return "과거 기록 초기화 중"
 
 def ask_expert(name, prompt, delay=0):
     time.sleep(delay)
@@ -104,7 +102,7 @@ def ask_expert(name, prompt, delay=0):
         res = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
         if res and res.text: return name, res.text
     except: pass
-    return name, "분석 지연 (API 응답 없음)"
+    return name, "분석 지연"
 
 def get_multi_tf_quant(exchange):
     timeframes = {'15m': 100, '1h': 100, '4h': 100}
@@ -118,12 +116,10 @@ def get_multi_tf_quant(exchange):
             gain = (delta.where(delta > 0, 0)).rolling(14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
             
-            # 🛡️ [패치 2] RSI 계산 시 무한상승/무한하락으로 인한 '0 나누기(NaN)' 에러 원천 방어
             loss = loss.replace(0, 0.0001) 
             df['rsi'] = 100 - (100 / (1 + gain / loss))
-            df['rsi'] = df['rsi'].fillna(50) # NaN 대비 최후의 보루
+            df['rsi'] = df['rsi'].fillna(50)
             
-            # 🛡️ [패치 4] POC 해상도 30 최적화 (100캔들 기준 통계적 유의미 극대화)
             hist, bins = np.histogram(df['close'], bins=30, weights=df['volume'])
             poc_price = (bins[np.argmax(hist)] + bins[np.argmax(hist)+1]) / 2
             
@@ -137,9 +133,9 @@ def get_multi_tf_quant(exchange):
             vol_sma = df['volume'].rolling(20).mean()
             last = df.iloc[-1]
             
-            vsa_status = "정상 (거래량-캔들 동조)"
+            vsa_status = "정상"
             if last['volume'] > vol_sma.iloc[-1] * 1.5 and last['body'] < df['body'].mean() * 0.5:
-                vsa_status = "🚨 VSA 이상 감지: 대량 거래량 + 짧은 캔들 (변곡 브레이크 확률 극상)"
+                vsa_status = "🚨 VSA 이상 감지: 대량 거래량 + 짧은 캔들 (변곡 확률 극상)"
 
             quant_data[tf] = {"rsi": last['rsi'], "poc": poc_price, "atr": last['atr'], "trend": trend, "vsa": vsa_status}
         except Exception as e:
@@ -157,30 +153,30 @@ def get_market_data():
         bid_vol = sum([v for p, v in orderbook['bids']])
         ask_vol = sum([v for p, v in orderbook['asks']])
         obi = ((bid_vol - ask_vol) / (bid_vol + ask_vol)) * 100
-        obi_status = f"{obi:.1f}% (" + ("매수벽 우위/숏커버 주의" if obi > 15 else "매도벽 우위/하락 주의" if obi < -15 else "중립") + ")"
+        obi_status = f"{obi:.1f}% (" + ("매수벽 우위" if obi > 15 else "매도벽 우위" if obi < -15 else "중립") + ")"
     except: obi_status = "오류"
 
     try:
         trades = exchange.fetch_trades(COIN_SYMBOL, limit=500)
         whale_buy = sum([t['amount']*t['price'] for t in trades if t['side'] == 'buy' and t['amount']*t['price'] >= 20000])
         whale_sell = sum([t['amount']*t['price'] for t in trades if t['side'] == 'sell' and t['amount']*t['price'] >= 20000])
-        whale_status = f"[고래 Taker] 매수: {whale_buy:.0f}$ / 매도: {whale_sell:.0f}$ ➔ " + ("🔥매수 융단폭격" if whale_buy > whale_sell else "🩸매도 융단폭격")
-    except: whale_status = "고래 데이터 수집 지연"
+        whale_status = f"[고래 Taker] 매수: {whale_buy:.0f}$ / 매도: {whale_sell:.0f}$ ➔ " + ("🔥매수 폭격" if whale_buy > whale_sell else "🩸매도 폭격")
+    except: whale_status = "고래 데이터 지연"
 
     funding = exchange.fetch_funding_rate(COIN_SYMBOL).get('fundingRate', 'N/A')
     oi = exchange.fetch_open_interest(COIN_SYMBOL).get('openInterestAmount', 'N/A')
     q = get_multi_tf_quant(exchange)
     
     quant_report = (
-        f"📊 [4H/대추세] {q.get('4h', {}).get('trend')} | RSI: {q.get('4h', {}).get('rsi', 0):.1f} | 거대매물대(POC): {q.get('4h', {}).get('poc', 0):.1f}\n"
-        f"📊 [1H/중기] {q.get('1h', {}).get('trend')} | RSI: {q.get('1h', {}).get('rsi', 0):.1f} | 1H 매물대(POC): {q.get('1h', {}).get('poc', 0):.1f}\n"
-        f"📊 [15M/타점] {q.get('15m', {}).get('vsa')} | 15M 매물대: {q.get('15m', {}).get('poc', 0):.1f}\n"
-        f"💡 [수학적 손익비 가이드]: 15M 변동폭(ATR) {q.get('15m', {}).get('atr', 0):.1f}$ 반영 필수."
+        f"📊 [4H/대추세] {q.get('4h', {}).get('trend')} | RSI: {q.get('4h', {}).get('rsi', 0):.1f} | POC: {q.get('4h', {}).get('poc', 0):.1f}\n"
+        f"📊 [1H/중기] {q.get('1h', {}).get('trend')} | RSI: {q.get('1h', {}).get('rsi', 0):.1f} | POC: {q.get('1h', {}).get('poc', 0):.1f}\n"
+        f"📊 [15M/타점] {q.get('15m', {}).get('vsa')} | 15M POC: {q.get('15m', {}).get('poc', 0):.1f}\n"
+        f"💡 [손익비 가이드]: 15M 변동폭(ATR) {q.get('15m', {}).get('atr', 0):.1f}$ 반영 필수."
     )
     
     raw_data = (
         f"🚨 [API 팩트 데이터] 상상 금지.\n\n"
-        f"[코인 실시간 체결/호가]\n"
+        f"[코인 실시간 팩트]\n"
         f"BTC 현재가: {btc_price} USDT (ETH: {eth_price})\n"
         f"펀딩비: {funding} / 미결제약정(OI): {oi}\n"
         f"걸려있는 호가(OBI): {obi_status}\n"
@@ -252,25 +248,59 @@ def generate_and_send_briefing(current_price, raw_data, ai_report):
     time.sleep(1); send_telegram_message(tele1); time.sleep(1); send_telegram_message(tele2)
     return s_ord, t_ord
 
+# ==========================================
+# 🚀 100% 확실한 실행 모드 분기 (이 부분이 핵심 패치입니다)
+# ==========================================
 if __name__ == "__main__":
-    is_st = "streamlit" in os.environ.get("_", "") or os.environ.get("STREAMLIT_SERVER_PORT")
-    if is_st:
-        st.set_page_config(page_title="AI 퀀트 봇", layout="wide")
-        st.title("🤖 AI 퀀트 봇 (절대 무결점 방어 버전)")
-        if st.button("🚀 실행"):
-            if not client: st.error("API 키 오류"); st.stop()
-            with st.status("무결점 팩트 연산 및 5단계 에러 방어 가동 중..."):
+    
+    # 💡 웹사이트(Streamlit) 환경을 100% 확실하게 찾아내는 특수 함수
+    def is_running_in_streamlit():
+        try:
+            from streamlit.runtime.scriptrunner import get_script_run_ctx
+            return get_script_run_ctx() is not None
+        except:
+            return False
+
+    if is_running_in_streamlit():
+        # 웹사이트 출력 전용 코드 (대표님이 원하시는 쾌적한 가독성 모드)
+        st.set_page_config(page_title="AI 실전 퀀트 봇", layout="wide", page_icon="🤖")
+        st.title("🤖 AI 실전 퀀트 대시보드")
+        st.markdown("텔레그램 알림뿐만 아니라, **웹에서 가장 쾌적하게 팩트 지표와 오더를 확인**할 수 있습니다.")
+        
+        if st.button("🚀 실시간 분석 즉시 실행", type="primary", use_container_width=True):
+            if not client: 
+                st.error("API 키 오류가 발생했습니다.")
+                st.stop()
+                
+            with st.status("수학적 팩트 연산 및 5단계 에러 방어 가동 중...", expanded=True):
                 try:
                     c_price, r_data, a_rep = get_market_data()
-                    st.warning(f"**[봇 자가 피드백]**\n{a_rep}")
+                    st.warning(f"**[봇 자가 피드백 (오답노트)]**\n{a_rep}")
+                    
                     s, t = generate_and_send_briefing(c_price, r_data, a_rep)
-                    st.success("전송 완료!")
+                    st.success("✅ 심층 분석 및 텔레그램 전송 완료!")
+                    
+                    st.divider()
+                    
+                    # 화면을 반으로 나누어 가독성 있게 출력
                     c1, c2 = st.columns(2)
-                    c1.success(s); c2.info(t)
-                except Exception as e: st.error(e)
+                    with c1:
+                        st.subheader("⚡ [단타용] 스캘퍼 최종 오더")
+                        st.success(s)
+                    with c2:
+                        st.subheader("📈 [스윙용] 추세 최종 오더")
+                        st.info(t)
+                        
+                    with st.expander("📊 AI가 참고한 실시간 수치 데이터 원본 보기"):
+                        st.code(r_data)
+                        
+                except Exception as e: 
+                    st.error(f"실행 중 오류 발생: {e}")
     else:
+        # 깃허브 자동화 전용 코드 (백그라운드에서 조용히 텔레그램만 전송)
         if client:
             try:
                 c_price, r_data, a_rep = get_market_data()
                 generate_and_send_briefing(c_price, r_data, a_rep)
-            except: pass
+            except: 
+                pass
