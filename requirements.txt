@@ -5,3 +5,9 @@ streamlit
 ccxt
 google-genai
 yfinance
+streamlit
+ccxt
+google-genai
+yfinance
+pandas
+numpy
